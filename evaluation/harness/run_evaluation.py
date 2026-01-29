@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import docker
+import docker.auth
 import json
 import resource
 import traceback
@@ -13,6 +14,21 @@ from tqdm import tqdm
 from shutil import copyfile, rmtree
 
 from datasets import load_dataset
+
+# 修复 load_config 函数的参数问题
+original_load_config = docker.auth.load_config
+
+def patched_load_config(*args, **kwargs):
+    # 移除所有不支持的参数
+    unsupported_params = ['config_dict', 'credstore_env']
+    for param in unsupported_params:
+        if param in kwargs:
+            del kwargs[param]
+    return original_load_config(*args, **kwargs)
+
+docker.auth.load_config = patched_load_config
+
+
 
 from .constants import (
     INSTANCE_IMAGE_BUILD_DIR,
@@ -61,24 +77,13 @@ def run_instance(
     ):
     """
     Run a single instance with the given prediction.
-
-    Args:
-        test_spec (TestSpec): TestSpec instance
-        pred (dict): Prediction w/ model_name_or_path, model_patch, instance_id
-        rm_image (bool): Whether to remove the image after running
-        force_rebuild (bool): Whether to force rebuild the image
-        client (docker.DockerClient): Docker client
-        run_id (str): Run ID
-        timeout (int): Timeout for running tests
     """
-    # Set up logging directory
     instance_id = test_spec.instance_id
+    print(f"[DEBUG] Starting run_instance for {instance_id}")
     
     log_dir = RUN_EVALUATION_LOG_DIR / run_id / instance_id
     log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Setup temp directory for storing input and output of evaluting this example
-    # instance_path = Path("temp", instance_id)
+    
     instance_path = log_dir
     if instance_path.exists():
         rmtree(instance_path)
@@ -87,54 +92,59 @@ def run_instance(
     os.makedirs(instance_path / "pred_results", exist_ok=True)
     with open(instance_path / "input" / "input.json", "w") as f:
         json.dump(test_spec.to_dict(), f)
-
-    # Link the image build dir in the log dir
+    print(f"[DEBUG] Created directories for {instance_id}")
+    
     build_dir = INSTANCE_IMAGE_BUILD_DIR / test_spec.instance_image_key.replace(":", "__")
     log_file = log_dir / "run_instance.log"
 
-    # Set up report file + logger
     report_path = log_dir / "report.json"
     if report_path.exists():
+        print(f"[DEBUG] Report already exists for {instance_id}, skipping")
         return instance_id, json.loads(report_path.read_text())
+    
     logger = setup_logger(instance_id, log_file)
+    print(f"[DEBUG] Logger set up for {instance_id}")
 
-    # Run the instance
     container = None
     try:
-        # Build + start instance container (instance image should already be built)
         test_spec.instance_path = instance_path
+        print(f"[DEBUG] Building container for {instance_id}")
         container = build_container(test_spec, client, run_id, logger, rm_image, force_rebuild)
+        print(f"[DEBUG] Container object returned for {instance_id}, starting container...")
         container.start()
-        
+        print(f"[DEBUG] Container for {instance_id} started with ID {container.id}")
         logger.info(f"Container for {instance_id} started: {container.id}")
-        # container is running here
 
-        # result = container.exec_run('conda run -n testbed python compute_scores.py')
         result, timed_out, total_run_time = exec_run_with_timeout(container, 'python compute_scores.py', timeout)
+        print(f"[DEBUG] exec_run_with_timeout finished for {instance_id}")
         print("############### result #################")
         print(result)
         logger.info(result)
-        
+
     except EvaluationError as e:
         error_msg = traceback.format_exc()
         logger.info(error_msg)
-        print(e)
+        print(f"[ERROR] EvaluationError for {instance_id}: {e}")
     except BuildImageError as e:
         error_msg = traceback.format_exc()
         logger.info(error_msg)
-        print(e)
+        print(f"[ERROR] BuildImageError for {instance_id}: {e}")
     except Exception as e:
         error_msg = (f"Error in evaluating model for {instance_id}: {e}\n"
                      f"{traceback.format_exc()}\n"
                      f"Check ({logger.log_file}) for more information.")
         logger.error(error_msg)
+        print(f"[ERROR] Exception for {instance_id}: {e}")
     finally:
-        # Remove instance container + image, close logger
+        print(f"[DEBUG] Cleaning up container for {instance_id}")
         cleanup_container(client, container, logger)
         if rm_image:
+            print(f"[DEBUG] Removing image {test_spec.instance_image_key} for {instance_id}")
             remove_image(client, test_spec.instance_image_key, logger)
         close_logger(logger)
+        print(f"[DEBUG] Finished run_instance for {instance_id}")
     return
+
 
 
 def run_instances(
@@ -164,7 +174,7 @@ def run_instances(
     client = docker.from_env()
     # test_specs = list(map(make_test_spec, examples))
     test_specs = [make_test_spec(instance, benchmark_path, pred_program_path) for instance in examples]
-    
+
     # print number of existing instance images
     instance_image_ids = {x.instance_image_key for x in test_specs}
     
@@ -292,7 +302,11 @@ def main(
         os.environ["OPENAI_API_KEY"] = openai_api_key
 
     # load dataset
-    dataset = load_dataset(dataset_name, split=split)
+    dataset = load_dataset(
+        "csv",
+        data_files="/mnt/c/Files/Code/Benchmark/datasets/ScienceAgentBench/ScienceAgentBench.csv",
+        split="train"
+    )
 
     num_instances = len(dataset)
     evaluated_indices = set()
@@ -347,14 +361,15 @@ def main(
         instance_pred_results_path = instance_path / "pred_results"
         if instance_pred_results_path.exists():
             rmtree(instance_pred_results_path)
-
+    
     try:
         if len(examples_to_run) == 0:
             print("No instances to run.")
         else:
             # build environment images + run instances
             build_base_images(client, examples_to_run, benchmark_path, pred_program_path, force_rebuild)
-            run_instances(examples_to_run, benchmark_path, pred_program_path, cache_level, clean, force_rebuild, max_workers, run_id, timeout)
+            print("Base images built.")
+            run_instances(examples_to_run, benchmark_path, pred_program_path, cache_level, clean, force_rebuild, 1, run_id, timeout)
     finally:
         import time
         time.sleep(2)  # for all threads to finish so that we can save the result file correctly

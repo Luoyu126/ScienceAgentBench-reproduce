@@ -1,3 +1,6 @@
+# What I've done is to reproduce the results of the paper "ScienceAgentBench: Toward Rigorous Assessment of Language Agents for Data-Driven Scientific Discovery"
+
+
 # ScienceAgentBench
 
 Code and data for the paper "[ScienceAgentBench: Toward Rigorous Assessment of Language Agents for Data-Driven Scientific Discovery](https://arxiv.org/abs/2410.05080)".

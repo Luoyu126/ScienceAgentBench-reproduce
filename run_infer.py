@@ -25,7 +25,12 @@ def format_task_dict(example, args):
 
 
 def main(args):
-    dataset_hf = load_dataset("osunlp/ScienceAgentBench", split="validation")
+    times = 0
+    dataset_hf = load_dataset(
+        "csv",
+        data_files="/mnt/c/Files/Code/Benchmark/datasets/ScienceAgentBench/ScienceAgentBench.csv",
+        split="train"
+    )
 
     agent = ScienceAgent(
         args.llm_engine_name,
@@ -53,8 +58,10 @@ def main(args):
             example = dataset_hf[index]
             task = format_task_dict(example, args)
             out_fname = Path(args.out_fpath, "pred_" + example["gold_program_name"])
-
+            print(f"开始处理任务 {index}，任务名称: {example['task_inst']}")
             trajectory = agent.solve_task(task, out_fname=str(out_fname))
+            times += 1
+            print(f"已完成 {times} 个任务，当前任务序号: {index}，任务名称: {example['task_inst']}")
             with open(args.log_fname, "a+", encoding="utf-8") as log_f:
                 log_f.write(json.dumps(trajectory) + "\n")
 
@@ -74,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--llm_engine_name",
         type=str,
-        default="anthropic.claude-3-5-sonnet-20240620-v1:0",
+        default="temp-claude-code",
     )
     parser.add_argument(
         "--context_cutoff",
@@ -84,7 +91,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--log_fname",
         type=str,
-        default="science_agent.jsonl",
+        default="claude-code.jsonl",
     )
     parser.add_argument(
         "--out_fpath",

@@ -1,6 +1,5 @@
 from engine.base_engine import LLMEngine
 
-from litellm import model_cost
 from litellm.utils import trim_messages
 from pathlib import Path
 from shutil import copyfile, rmtree
@@ -36,7 +35,6 @@ Here are some helpful previews for the dataset file(s):
 class ScienceAgent():
     def __init__(self, llm_engine_name, context_cutoff=28000, use_self_debug=False, use_knowledge=False):
         self.llm_engine = LLMEngine(llm_engine_name)
-        self.llm_cost = model_cost[llm_engine_name]
 
         self.context_cutoff = context_cutoff
         self.use_self_debug = use_self_debug
@@ -149,13 +147,11 @@ class ScienceAgent():
         return False, err_msg
 
     def step(self, out_fname, output_fname):
-        out_module_name = out_fname.replace("/", '.')[:-3] # remove ".py" suffix
-
         special_err, err_msg = self.install(out_fname)
 
         if not special_err:
             try:
-                exec_res = subprocess.run(["conda", "run", "-n", "sci-agent-eval", "python", "-m", out_module_name], capture_output=True, timeout=900)
+                exec_res = subprocess.run(["conda", "run", "-n", "sci-agent-eval", "python",  output_fname], capture_output=True, timeout=900)
             except subprocess.TimeoutExpired:
                 special_err = True
                 err_msg = "The program fails to finish execution within 900 seconds. Please try to reduce the execution time of your implementation."
@@ -186,12 +182,7 @@ class ScienceAgent():
                 {'role': 'user', 'content': err_msg}
             ]
 
-            assistant_output, prompt_tokens, completion_tokens = self.llm_engine.respond(user_input, temperature=0.2, top_p=0.95)
-
-            cost = (
-                self.llm_cost["input_cost_per_token"] * prompt_tokens +
-                self.llm_cost["output_cost_per_token"] * completion_tokens
-            )
+            assistant_output = self.llm_engine.respond(user_input, temperature=0.2)
 
             early_stopping = self.write_program(assistant_output, out_fname)
 
@@ -200,7 +191,7 @@ class ScienceAgent():
                 {'role': 'assistant', 'content': assistant_output}
             ]
 
-            return early_stopping, cost
+            return early_stopping
 
     def solve_task(self, task, out_fname):
         # Clean history
@@ -211,13 +202,9 @@ class ScienceAgent():
         user_input = [
             {'role': 'user', 'content': self.sys_msg}
         ]
-
-        assistant_output, prompt_tokens, completion_tokens = self.llm_engine.respond(user_input, temperature=0.2, top_p=0.95)
-
-        cost = (
-            self.llm_cost["input_cost_per_token"] * prompt_tokens +
-            self.llm_cost["output_cost_per_token"] * completion_tokens
-        )
+        
+        assistant_output = self.llm_engine.respond(user_input, temperature=0.2)
+        print(assistant_output)
 
         self.write_program(assistant_output, out_fname)
 
@@ -226,9 +213,10 @@ class ScienceAgent():
         )
 
         if self.use_self_debug:
+            print("Entering self-debugging phase...")
             for t in range(10):
-                halt, new_cost = self.step(out_fname, task["output_fname"])
-                cost += new_cost
+                print(f"self_debug : phase {t+1}")
+                halt = self.step(out_fname, task["output_fname"])
                 if halt:
                     break
 
@@ -236,7 +224,7 @@ class ScienceAgent():
             {'role': 'user', 'content': self.sys_msg}
         ] + self.history
 
-        return {"history": self.history, "cost": cost}
+        return {"history": self.history}
 
 
 if __name__ == "__main__":

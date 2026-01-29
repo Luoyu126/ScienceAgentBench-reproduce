@@ -1,0 +1,11 @@
+Scientific Data Analysis Report
+-----------------------------------
+Total Samples Analyzed: 500
+Input Distribution Parameters (Target): Mean=15.0, Std Dev=2.5
+
+Calculated Statistics:
+Mean (Average): 15.017095
+Standard Deviation: 2.450679
+Variance: 6.005826
+Minimum Value: 6.896832
+Maximum Value: 24.631829

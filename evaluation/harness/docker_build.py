@@ -126,7 +126,7 @@ def build_image(
             tag=image_name,
             rm=True,
             forcerm=True,
-            decode=True,
+            decode=False,
             platform=platform,
             nocache=nocache,
         )
@@ -135,19 +135,25 @@ def build_image(
         # Log the build process continuously
         buildlog = ""
         for chunk in response:
-            if "stream" in chunk:
-                # Remove ANSI escape sequences from the log
-                chunk_stream = ansi_escape.sub("", chunk["stream"])
-                logger.info(chunk_stream.strip())
-                buildlog += chunk_stream
-            elif "errorDetail" in chunk:
-                # Decode error message, raise BuildError
-                logger.error(
-                    f"Error: {ansi_escape.sub('', chunk['errorDetail']['message'])}"
-                )
-                raise docker.errors.BuildError(
-                    chunk["errorDetail"]["message"], buildlog
-                )
+            if isinstance(chunk, bytes):
+                chunk_str = chunk.decode("utf-8", errors="ignore")
+            else:
+                chunk_str = str(chunk)
+
+            # 去掉 ANSI 转义字符
+            chunk_str = ansi_escape.sub("", chunk_str)
+
+            # 记录日志
+            for line in chunk_str.splitlines():
+                line = line.strip()
+                if line:
+                    logger.info(line)
+            buildlog += chunk_str
+
+            # 简单匹配错误信息
+            if "errorDetail" in chunk_str:
+                logger.error(f"Error found in build output: {chunk_str}")
+                raise docker.errors.BuildError(chunk_str, buildlog)
         logger.info("Image built successfully!")
     except docker.errors.BuildError as e:
         logger.error(f"docker.errors.BuildError during {image_name}: {e}")
@@ -174,43 +180,43 @@ def build_base_images(
         dataset (list): List of test specs or dataset to build images for
         force_rebuild (bool): Whether to force rebuild the images even if they already exist
     """
-    # Get the base images to build from the dataset
-    test_specs = get_test_specs_from_dataset(dataset, benchmark_path, pred_program_path)
-    base_images = {
-        x.base_image_key: (x.base_dockerfile, x.platform) for x in test_specs
-    }
-    if force_rebuild:
-        for key in base_images:
-            remove_image(client, key, "quiet")
-    # import pdb
-    # pdb.set_trace()
-    # Build the base images
-    for image_name, (dockerfile, platform) in base_images.items():
-        try:
-            # Check if the base image already exists
-            client.images.get(image_name)
-            if force_rebuild:
-                # Remove the base image if it exists and force rebuild is enabled
-                # import pdb
-                # pdb.set_trace()
-                remove_image(client, image_name, "quiet")
-            else:
-                print(f"Base image {image_name} already exists, skipping build.")
-                continue
-        except docker.errors.ImageNotFound:
-            pass
-        # Build the base image (if it does not exist or force rebuild is enabled)
-        print(f"Building base image ({image_name})")
+    # # Get the base images to build from the dataset
+    # test_specs = get_test_specs_from_dataset(dataset, benchmark_path, pred_program_path)
+    # base_images = {
+    #     x.base_image_key: (x.base_dockerfile, x.platform) for x in test_specs
+    # }
+    # if force_rebuild:
+    #     for key in base_images:
+    #         remove_image(client, key, "quiet")
+    # # import pdb
+    # # pdb.set_trace()
+    # # Build the base images
+    # for image_name, (dockerfile, platform) in base_images.items():
+    #     try:
+    #         # Check if the base image already exists
+    #         client.images.get(image_name)
+    #         if force_rebuild:
+    #             # Remove the base image if it exists and force rebuild is enabled
+    #             # import pdb
+    #             # pdb.set_trace()
+    #             remove_image(client, image_name, "quiet")
+    #         else:
+    #             print(f"Base image {image_name} already exists, skipping build.")
+    #             continue
+    #     except docker.errors.ImageNotFound:
+    #         pass
+    #     # Build the base image (if it does not exist or force rebuild is enabled)
+    #     print(f"Building base image ({image_name})")
 
 
-        build_image(
-            image_name=image_name,
-            setup_scripts={},
-            dockerfile=dockerfile,
-            platform=platform,
-            client=client,
-            build_dir=BASE_IMAGE_BUILD_DIR / image_name.replace(":", "__"),
-        )
+    #     build_image(
+    #         image_name=image_name,
+    #         setup_scripts={},
+    #         dockerfile=dockerfile,
+    #         platform=platform,
+    #         client=client,
+    #         build_dir=BASE_IMAGE_BUILD_DIR / image_name.replace(":", "__"),
+    #     )
     print("Base images built successfully.")
 
 
@@ -230,6 +236,7 @@ def build_instance_image(
         nocache (bool): Whether to use the cache when building
     """
     # Set up logging for the build process
+    print("Building instance image:", test_spec.instance_image_key)
     build_dir = INSTANCE_IMAGE_BUILD_DIR / test_spec.instance_image_key.replace(":", "__")
     build_dir.mkdir(parents=True, exist_ok=True)
     new_logger = False
@@ -354,7 +361,7 @@ def build_container(
                     'bind': '/testbed/gpt4_visual_judge.py',
                     'mode': 'rw'
                 },
-            }
+            },
         )
 
         logger.info(f"Container for {test_spec.instance_id} created: {container.id}")

@@ -5,22 +5,12 @@ FROM --platform={platform} ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-RUN apt update && apt install -y \
-wget \
-git \
-build-essential \
-libffi-dev \
-libtiff-dev \
-python3 \
-python3-pip \
-python-is-python3 \
-jq \
-curl \
-locales \
-locales-all \
-tzdata \
-libxrender1 \
-&& rm -rf /var/lib/apt/lists/*
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list \
+    && apt update \
+    && apt install -y wget git build-essential libffi-dev libtiff-dev python3 python3-pip python-is-python3 jq curl locales locales-all tzdata libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
 
 # Download and install conda
 RUN wget 'https://repo.anaconda.com/miniconda/Miniconda3-py311_23.11.0-2-Linux-{conda_arch}.sh' -O miniconda.sh \
